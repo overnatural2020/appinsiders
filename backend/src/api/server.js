@@ -171,8 +171,10 @@ app.get("/api/admin/ingest/status", requireAuth, requireAdmin, (_req, res) => re
 app.get("/api/admin/diag", requireAuth, requireAdmin, (_req, res) => res.json({
   priceProvider: config.market.provider,
   tiingoKeyPresent: !!config.market.tiingoKey,
+  tiingoKeyLen: (config.market.tiingoKey || "").length,
   benchmark: config.market.benchmark,
   dataDir: config.dataDir,
+  lastPriceError: globalThis.__lastPriceError || null,
 }));
 
 /* ----------------- frontend compilado (SPA, mismo origen) --------------- */

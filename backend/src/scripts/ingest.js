@@ -38,6 +38,7 @@ async function cachePrices(ticker, { force = false, maxAgeHours = 20 } = {}) {
     }
   } catch (e) {
     console.warn(`  ! precios ${ticker}: ${e.message}`);
+    globalThis.__lastPriceError = `${T}: ${e.message}`;
   }
 }
 
