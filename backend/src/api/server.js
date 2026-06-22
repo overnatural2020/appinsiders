@@ -141,11 +141,13 @@ let ingestState = { running: false, total: 0, done: 0, current: null, startedAt:
 async function runIngest(tickers, since) {
   ingestState = { running: true, total: tickers.length, done: 0, current: null, startedAt: new Date().toISOString(), finishedAt: null, errors: [] };
   try { await cachePrices(config.market.benchmark); } catch {}
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (const t of tickers) {
     ingestState.current = t;
     try { await ingestTicker(t, since); }
     catch (e) { ingestState.errors.push(`${t}: ${e.message}`); }
     ingestState.done++;
+    await sleep(1500); // respiro entre tickers para no disparar el rate-limit
   }
   ingestState.running = false;
   ingestState.current = null;

@@ -113,12 +113,14 @@ export async function overlayRealData(synthDs, gridMeta, token = getToken()) {
   const ds = { ...synthDs, tickers: { ...synthDs.tickers } };
   const realSyms = [];
 
-  // Benchmark real (SPY) si está disponible.
+  // Benchmark real (SPY) o null — nunca sintético (para no falsear excesos/régimen).
+  let benchReal = null;
   try {
     const spy = await getJSON(`/api/market/SPY`, token);
-    const bench = weeklyPriceFromDaily(spy.prices, grid);
-    if (bench) { ds.bench = bench; ds.sentiment = bench; } // régimen sobre índice real
-  } catch { /* sin SPY: se conserva el bench sintético */ }
+    benchReal = weeklyPriceFromDaily(spy.prices, grid);
+  } catch { /* sin SPY */ }
+  ds.bench = benchReal;
+  ds.sentiment = benchReal;
 
   // Para cada ticker del catálogo que esté ingerido, superpone semanas + precio reales.
   await Promise.all(
@@ -131,7 +133,8 @@ export async function overlayRealData(synthDs, gridMeta, token = getToken()) {
         ]);
         const base = synthDs.tickers[sym];
         const weeks = weeklyInsidersOnGrid(wk.weeks, gridWeeks);
-        const price = mk ? weeklyPriceFromDaily(mk.prices, grid, base.meta.price) : base.price;
+        // Precio REAL o null — nunca sintético (evita retornos forward falsos).
+        const price = mk ? weeklyPriceFromDaily(mk.prices, grid, base.meta.price) : null;
         ds.tickers[sym] = { ...base, weeks, price, real: true };
         realSyms.push(sym);
       } catch { /* deja el sintético para este símbolo */ }

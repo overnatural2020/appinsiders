@@ -236,9 +236,13 @@ function passesQuality(t, f) {
   return t.mcap >= f.mcapMin && t.mcap <= f.mcapMax &&
     t.addv >= f.addvMin && t.price >= f.priceMin && (!f.revOnly || t.rev);
 }
-function buildUniverse(filters, sectors, adds) {
-  const set = new Set(adds); // los fijados entran aunque no pasen los filtros
+function buildUniverse(filters, sectors, adds, realSet) {
+  const set = new Set();
+  // Solo entran tickers con datos REALES del backend (nada sintético).
+  const ok = (sym) => !realSet || realSet.has(sym);
+  for (const s of adds) if (ok(s)) set.add(s); // fijados entran aunque no pasen filtros
   for (const t of CATALOG) {
+    if (!ok(t.sym)) continue;
     if (!sectors.includes(t.sector)) continue;
     if (passesQuality(t, filters)) set.add(t.sym);
   }
@@ -254,6 +258,7 @@ function scanWeek(ds, universe, wi, threshold, side) {
   for (const t of CATALOG) {
     if (!universe.has(t.sym)) continue;
     const T = ds.tickers[t.sym];
+    if (!T?.real) continue; // solo datos reales
     const w = T.weeks[wi];
     if (!w) continue;
     const base = T.weeks.slice(Math.max(0, wi - 52), wi);
@@ -267,6 +272,7 @@ function scanWeek(ds, universe, wi, threshold, side) {
 }
 
 function fwd(T, bench, wi, h) {
+  if (!T.price || !bench) return null;               // sin precios reales → sin retorno
   if (wi + h >= T.price.length) return null;
   return T.price[wi + h] / T.price[wi] - 1 - (bench[wi + h] / bench[wi] - 1);
 }
@@ -276,6 +282,7 @@ function backtest(ds, universe, threshold) {
   for (const t of CATALOG) {
     if (!universe.has(t.sym)) continue;
     const T = ds.tickers[t.sym];
+    if (!T?.real) continue; // solo datos reales
     for (let i = 52; i < T.weeks.length; i++) {
       if (!isClosed(T.weeks[i].ws)) continue;
       const base = T.weeks.slice(i - 52, i);
@@ -436,7 +443,8 @@ function Scanner({ me, onLogout, onAdmin }) {
   const applyPreset = (id) => { setPreset(id); setFilters(id === "quality" ? PRESET_QUALITY : PRESET_ALL); };
   const setF = (k, v) => { setFilters((f) => ({ ...f, [k]: v })); setPreset("custom"); };
 
-  const universe = useMemo(() => buildUniverse(filters, sectors, adds), [filters, sectors, adds]);
+  const realSet = useMemo(() => new Set(real.realSyms), [real.realSyms]);
+  const universe = useMemo(() => buildUniverse(filters, sectors, adds, realSet), [filters, sectors, adds, realSet]);
   const asOfWeek = WEEK_OPTS[idx];
   const results = useMemo(() => scanWeek(ds, universe, asOfWeek.i, threshold, side), [ds, universe, asOfWeek, threshold, side]);
   const bt = useMemo(() => backtest(ds, universe, threshold), [ds, universe, threshold]);
@@ -447,7 +455,7 @@ function Scanner({ me, onLogout, onAdmin }) {
   const maxAbs = Math.max(1, ...chart.map((d) => Math.max(d.buy, -d.sell)));
   const fwds = active ? { m1: fwd(T, ds.bench, active.wi, H.m1), m3: fwd(T, ds.bench, active.wi, H.m3), m6: fwd(T, ds.bench, active.wi, H.m6) } : null;
   const tMax = Math.max(0.001, ...bt.terciles.map((t) => Math.abs(t.v)));
-  const regime = useMemo(() => regimeAt(ds.sentiment, asOfWeek.i), [ds, asOfWeek]);
+  const regime = useMemo(() => (ds.sentiment ? regimeAt(ds.sentiment, asOfWeek.i) : null), [ds, asOfWeek]);
   const verdict = useMemo(() => buildVerdict(active, bt, active ? fwds.m3 == null : false, regime), [active, bt, fwds, regime]);
 
   const toggleSector = (s) => setSectors((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]);
@@ -493,7 +501,7 @@ function Scanner({ me, onLogout, onAdmin }) {
           ) : real.realSyms.length ? (
             <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.buy }}>● {real.realSyms.length} reales (EDGAR)</span>
           ) : (
-            <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.amber }}>● sintético {real.offline ? "(sin backend)" : ""}</span>
+            <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.amber }}>● {real.offline ? "sin backend" : "sin datos aún"}</span>
           )}
           <span style={{ fontFamily: MONO, fontSize: 11, color: C.mut }}>v6</span>
         </span>
@@ -629,8 +637,7 @@ function Scanner({ me, onLogout, onAdmin }) {
         </Panel></>
       )}
 
-      <Head left="Contexto de mercado" right={prettyWeek(asOfWeek.ws)} />
-      <RegimeGauge r={regime} />
+      {regime && (<><Head left="Contexto de mercado" right={prettyWeek(asOfWeek.ws)} /><RegimeGauge r={regime} /></>)}
 
       {active && (
         <div style={{ marginTop: 22 }}>
@@ -705,8 +712,10 @@ function Scanner({ me, onLogout, onAdmin }) {
 
       <p style={{ color: C.mut, fontSize: 11, lineHeight: 1.6, marginTop: 22, textAlign: "center" }}>
         {real.realSyms.length
-          ? `${real.realSyms.length} tickers con Form 4 reales de SEC EDGAR y precios reales (${real.realSyms.join(", ")}); el resto del catálogo es sintético. Esto no es asesoría de inversión.`
-          : "Datos sintéticos con edge modesto y ruidoso, a propósito. En producción: catálogo y Form 4 de SEC EDGAR. Esto no es asesoría de inversión."}
+          ? `${real.realSyms.length} tickers analizados con Form 4 reales de SEC EDGAR. Solo se muestran señales con datos reales. Esto no es asesoría de inversión.`
+          : real.loading
+            ? "Cargando datos reales de SEC EDGAR…"
+            : "Sin datos reales todavía. Ingiere tickers desde el panel de administración. Esto no es asesoría de inversión."}
       </p>
     </div>
   );

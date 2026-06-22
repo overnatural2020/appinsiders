@@ -7,7 +7,7 @@ import { cikForTicker, listForm4Filings, fetchForm4Xml } from "../edgar/client.j
 import { parseForm4 } from "../pipeline/form4Parser.js";
 import { aggregateWeekly, enrichOpportunistic } from "../pipeline/aggregate.js";
 import { fetchDailyPrices } from "../market/client.js";
-import { saveTransactions, saveWeekly, savePrices } from "../store/jsonStore.js";
+import { saveTransactions, saveWeekly, savePrices, getWeekly } from "../store/jsonStore.js";
 import { config } from "../config.js";
 import { pathToFileURL } from "node:url";
 
@@ -50,6 +50,18 @@ export async function ingestTicker(ticker, sinceISO) {
 
   let weeks = aggregateWeekly(txns);
   weeks = enrichOpportunistic(txns, weeks);
+
+  // Salvaguarda: no sobrescribir datos buenos con un resultado vacío (p.ej. si
+  // todas las descargas de XML fallaron por throttling). Si no parseamos nada
+  // pero ya había datos guardados, conservamos los anteriores.
+  if (txns.length === 0) {
+    const prev = await getWeekly(ticker);
+    if (prev?.weeks?.length) {
+      console.warn(`  ! ${ticker}: 0 operaciones parseadas; conservo datos previos (${prev.weeks.length} semanas)`);
+      await cachePrices(ticker);
+      return;
+    }
+  }
 
   await saveTransactions(ticker, txns);
   await saveWeekly(ticker, weeks);

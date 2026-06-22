@@ -10,17 +10,34 @@ async function throttle() {
   lastReq = Date.now();
 }
 
-async function edgarFetch(url, { json = false } = {}) {
-  await throttle();
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": config.userAgent,
-      "Accept-Encoding": "gzip, deflate",
-      Accept: json ? "application/json" : "*/*",
-    },
-  });
-  if (!res.ok) throw new Error(`EDGAR ${res.status} ${res.statusText} :: ${url}`);
-  return json ? res.json() : res.text();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function edgarFetch(url, { json = false, retries = 4 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    await throttle();
+    let res;
+    try {
+      res = await fetch(url, {
+        headers: {
+          "User-Agent": config.userAgent,
+          "Accept-Encoding": "gzip, deflate",
+          Accept: json ? "application/json" : "*/*",
+        },
+      });
+    } catch (e) {
+      // error de red: reintenta con backoff
+      if (attempt >= retries) throw e;
+      await sleep(800 * 2 ** attempt);
+      continue;
+    }
+    // 429/403 (rate limit) y 5xx: reintenta con backoff exponencial
+    if ((res.status === 429 || res.status === 403 || res.status >= 500) && attempt < retries) {
+      await sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    if (!res.ok) throw new Error(`EDGAR ${res.status} ${res.statusText} :: ${url}`);
+    return json ? res.json() : res.text();
+  }
 }
 
 const cik10 = (cik) => String(cik).replace(/\D/g, "").padStart(10, "0");
