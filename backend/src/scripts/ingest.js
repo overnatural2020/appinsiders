@@ -19,11 +19,21 @@ function parseArgs(argv) {
   return a;
 }
 
-async function cachePrices(ticker) {
+// Refresca precios solo si están "viejos" (por defecto > ~20h) para no gastar
+// peticiones del proveedor en cada corrida. force=true ignora la frescura.
+async function cachePrices(ticker, { force = false, maxAgeHours = 20 } = {}) {
+  const T = ticker.toUpperCase();
   try {
+    if (!force) {
+      const existing = await getPrices(T);
+      if (existing?.prices?.length && existing.updatedAt) {
+        const ageH = (Date.now() - Date.parse(existing.updatedAt)) / 36e5;
+        if (ageH < maxAgeHours) { console.log(`  · precios ${ticker}: frescos (${ageH.toFixed(0)}h), se omite`); return; }
+      }
+    }
     const prices = await fetchDailyPrices(ticker);
     if (prices?.length) {
-      await savePrices(ticker.toUpperCase(), prices);
+      await savePrices(T, prices);
       console.log(`  · precios ${ticker}: ${prices.length} días`);
     }
   } catch (e) {
