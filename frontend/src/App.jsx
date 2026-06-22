@@ -305,11 +305,21 @@ function backtest(ds, universe, threshold) {
   } : { n: 0, hit: 0, avg: 0 };
   const sorted = [...buys].sort((a, b) => a.conv - b.conv);
   const third = Math.max(1, Math.floor(sorted.length / 3));
-  const seg = (s, e) => mean(sorted.slice(s, e).map((x) => x.exc));
-  const terciles = sorted.length >= 3 ? [
-    { label: "Baja", v: seg(0, third) }, { label: "Media", v: seg(third, 2 * third) },
-    { label: "Alta", v: seg(2 * third, sorted.length) },
-  ] : [];
+  // Cada tercil: exceso medio (v), tasa de acierto (hit), nº (n) y rango de convicción (lo/hi).
+  const seg = (s, e, label) => {
+    const sl = sorted.slice(s, e);
+    return {
+      label,
+      v: mean(sl.map((x) => x.exc)),
+      hit: sl.length ? sl.filter((x) => x.exc > 0).length / sl.length : 0,
+      n: sl.length,
+      lo: sl.length ? sl[0].conv : 0,
+      hi: sl.length ? sl[sl.length - 1].conv : 0,
+    };
+  };
+  const terciles = sorted.length >= 3
+    ? [seg(0, third, "Baja"), seg(third, 2 * third, "Media"), seg(2 * third, sorted.length, "Alta")]
+    : [];
   return { buy: stats(buys, "buy"), sell: stats(sells, "sell"), terciles };
 }
 
@@ -375,23 +385,28 @@ function buildVerdict(active, bt, recent, regime) {
   }
 
   const conv = active.conv.score;
-  const edgeOk = bt.buy.n >= 8 && bt.buy.hit > 0.55;
-  const noEdge = bt.buy.n >= 8 && bt.buy.hit <= 0.5;
-  const slopeOk = bt.terciles.length === 3 && bt.terciles[2].v > bt.terciles[0].v + 0.03;
+  // Juzga la señal contra las de SU MISMO nivel de convicción (su tercil), no
+  // contra el promedio global (que se diluye con el ruido de baja convicción).
+  const T3 = bt.terciles;
+  const tier = T3.length === 3 ? (conv <= T3[0].hi ? T3[0] : conv <= T3[1].hi ? T3[1] : T3[2]) : null;
+  const tierEdgeOk = !!tier && tier.n >= 4 && tier.v > 0.02 && tier.hit >= 0.55;
+  const tierNoEdge = !!tier && tier.n >= 4 && (tier.v <= 0 || tier.hit < 0.45);
+  const slopeOk = T3.length === 3 && T3[2].v > T3[0].v + 0.03;
   let mult = 0.85;
-  if (edgeOk && slopeOk) mult = 1.0;
-  if (noEdge) mult = 0.55;
-  if (bt.buy.n < 8) mult = Math.min(mult, 0.8);
+  if (tierEdgeOk) mult = slopeOk ? 1.0 : 0.95;
+  if (tierNoEdge) mult = 0.55;
+  if (!tier || tier.n < 4) mult = Math.min(mult, 0.8); // muestra del nivel insuficiente
   const buyCase = Math.round(conv * mult);
   if (conv >= 70) R.push({ t: "green", x: `Convicción alta (${conv}/100): ${active.conv.role === 1 ? "compra de CEO" : active.conv.role >= 0.9 ? "compra de CFO" : "varios insiders"}${active.conv.opp ? ", oportunista" : ""}, ${active.conv.n} insiders.` });
   else if (conv >= 45) R.push({ t: "yellow", x: `Convicción media (${conv}/100): presente pero no contundente.` });
   else R.push({ t: "red", x: `Convicción baja (${conv}/100): señal débil.` });
-  if (edgeOk) R.push({ t: "green", x: `Compras así aciertan ${(bt.buy.hit * 100).toFixed(0)}% (${pct(bt.buy.avg)} medio a 3m).` });
-  else if (noEdge) R.push({ t: "red", x: `Sin ventaja histórica (acierto ${(bt.buy.hit * 100).toFixed(0)}%): no validada.` });
-  else R.push({ t: "yellow", x: `Ventaja histórica ambigua (acierto ${(bt.buy.hit * 100).toFixed(0)}%).` });
+  if (tierEdgeOk) R.push({ t: "green", x: `Señales de convicción similar (${tier.label.toLowerCase()}) aciertan ${(tier.hit * 100).toFixed(0)}% (${pct(tier.v)} medio a 3m).` });
+  else if (tierNoEdge) R.push({ t: "red", x: `Señales de este nivel sin ventaja (acierto ${(tier.hit * 100).toFixed(0)}%, ${pct(tier.v)} a 3m): no validada.` });
+  else if (tier) R.push({ t: "yellow", x: `Ventaja del nivel ambigua (acierto ${(tier.hit * 100).toFixed(0)}%, n=${tier.n}).` });
+  else R.push({ t: "yellow", x: "Muestra insuficiente para validar por nivel." });
   if (slopeOk) R.push({ t: "green", x: "Más convicción ⇒ más retorno: el score discrimina." });
   else R.push({ t: "yellow", x: "El score discrimina poco entre niveles." });
-  if (bt.buy.n < 25) R.push({ t: "yellow", x: `Muestra pequeña (n=${bt.buy.n}): veredicto tentativo.` });
+  if (tier && tier.n < 8) R.push({ t: "yellow", x: `Muestra del nivel pequeña (n=${tier.n}): veredicto tentativo.` });
   if (recent) R.push({ t: "yellow", x: "Señal reciente: sin retorno realizado aún; se apoya en histórico." });
   ctx();
   let level = "red", headline = "Señal débil";
