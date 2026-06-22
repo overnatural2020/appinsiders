@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   adminListUsers, adminCreateUser, adminUpdateUser, adminDeleteUser,
   adminGetSchedule, adminSaveSchedule, adminRunInspection,
+  adminIngest, adminIngestStatus, fetchTickers,
 } from "./api";
 
 const C = {
@@ -16,7 +17,7 @@ const H2 = ({ children, right }) => <div style={{ display: "flex", justifyConten
 const input = { background: C.bg, border: `1px solid ${C.line}`, borderRadius: 8, padding: "9px 11px", color: C.text, fontSize: 13, outline: "none" };
 const btn = (bg, fg = "#06222e") => ({ background: bg, color: fg, border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" });
 
-export default function Admin({ me, onClose }) {
+export default function Admin({ me, onClose, catalogSyms = [] }) {
   const [users, setUsers] = useState([]);
   const [schedule, setSchedule] = useState(null);
   const [recipients, setRecipients] = useState([]);
@@ -24,16 +25,50 @@ export default function Admin({ me, onClose }) {
   const [form, setForm] = useState({ email: "", password: "", role: "viewer", alerts: true });
   const [runResult, setRunResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [ingest, setIngest] = useState(null);     // estado de ingesta en curso
+  const [ingested, setIngested] = useState([]);   // tickers reales ya en el backend
 
   const flash = (t, kind = "ok") => { setMsg({ t, kind }); setTimeout(() => setMsg(null), 3500); };
 
   const load = async () => {
     try {
-      const [u, s] = await Promise.all([adminListUsers(), adminGetSchedule()]);
-      setUsers(u); setSchedule(s.schedule); setRecipients(s.recipients);
+      const [u, s, tk] = await Promise.all([adminListUsers(), adminGetSchedule(), fetchTickers().catch(() => [])]);
+      setUsers(u); setSchedule(s.schedule); setRecipients(s.recipients); setIngested(tk);
     } catch (e) { flash(e.message, "err"); }
   };
   useEffect(() => { load(); }, []);
+
+  // Polling del estado de ingesta mientras corre.
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const st = await adminIngestStatus();
+        if (!alive) return;
+        setIngest(st);
+        if (st.running) setTimeout(tick, 2000);
+        else { fetchTickers().then(setIngested).catch(() => {}); }
+      } catch { /* ignore */ }
+    };
+    tick();
+    return () => { alive = false; };
+  }, []);
+
+  const startIngest = async () => {
+    if (!catalogSyms.length) return;
+    try {
+      await adminIngest(catalogSyms, schedule?.seedSince || "2024-12-01");
+      flash(`Ingesta iniciada: ${catalogSyms.length} tickers`);
+      setIngest({ running: true, total: catalogSyms.length, done: 0, current: null, errors: [] });
+      const tick = async () => {
+        const st = await adminIngestStatus();
+        setIngest(st);
+        if (st.running) setTimeout(tick, 2000);
+        else fetchTickers().then(setIngested).catch(() => {});
+      };
+      setTimeout(tick, 1500);
+    } catch (e) { flash(e.message, "err"); }
+  };
 
   const createUser = async (e) => {
     e.preventDefault();
@@ -113,6 +148,34 @@ export default function Admin({ me, onClose }) {
             </div>
           ))}
         </div>
+      </Panel>
+
+      {/* ---------- DATOS / INGESTA ---------- */}
+      <H2 right={<span style={{ fontFamily: MONO, fontSize: 12, color: C.mut }}>{ingested.length}/{catalogSyms.length} reales</span>}>Datos de EDGAR</H2>
+      <Panel>
+        <p style={{ margin: "0 0 12px", fontSize: 12.5, color: C.mut, lineHeight: 1.5 }}>
+          Descarga Form 4 + precios reales de todo el catálogo ({catalogSyms.length} empresas). EDGAR es lento (límite ~8 req/s), así que tarda varios minutos; corre en segundo plano.
+        </p>
+        {ingest?.running ? (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 6 }}>
+              <span style={{ color: C.text }}>Ingiriendo {ingest.current || "…"}</span>
+              <span style={{ fontFamily: MONO, color: C.ice }}>{ingest.done}/{ingest.total}</span>
+            </div>
+            <div style={{ height: 8, background: C.bg, borderRadius: 5, overflow: "hidden" }}>
+              <div style={{ width: `${ingest.total ? (ingest.done / ingest.total) * 100 : 0}%`, height: "100%", background: C.ice, transition: "width .4s" }} />
+            </div>
+          </div>
+        ) : (
+          <>
+            <button onClick={startIngest} style={btn(C.ice)}>↓ Ingerir catálogo completo ({catalogSyms.length})</button>
+            {ingest && ingest.finishedAt && (
+              <div style={{ marginTop: 10, fontSize: 12, color: C.mut }}>
+                Última ingesta: {ingest.done}/{ingest.total} · {ingest.errors?.length || 0} errores{ingest.errors?.length ? ` (${ingest.errors.slice(0, 3).join("; ")}${ingest.errors.length > 3 ? "…" : ""})` : ""}
+              </div>
+            )}
+          </>
+        )}
       </Panel>
 
       {/* ---------- ALERTAS / SCHEDULER ---------- */}

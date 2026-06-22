@@ -134,6 +134,37 @@ app.post("/api/admin/schedule/run", requireAuth, requireAdmin, async (req, res) 
   }
 });
 
+/* --------------------- ingesta de tickers (background) ------------------- */
+// Estado en memoria de la ingesta en curso (EDGAR es lento por el rate limit).
+let ingestState = { running: false, total: 0, done: 0, current: null, startedAt: null, finishedAt: null, errors: [] };
+
+async function runIngest(tickers, since) {
+  ingestState = { running: true, total: tickers.length, done: 0, current: null, startedAt: new Date().toISOString(), finishedAt: null, errors: [] };
+  try { await cachePrices(config.market.benchmark); } catch {}
+  for (const t of tickers) {
+    ingestState.current = t;
+    try { await ingestTicker(t, since); }
+    catch (e) { ingestState.errors.push(`${t}: ${e.message}`); }
+    ingestState.done++;
+  }
+  ingestState.running = false;
+  ingestState.current = null;
+  ingestState.finishedAt = new Date().toISOString();
+  console.log(`[ingest] completo: ${ingestState.done}/${ingestState.total} (${ingestState.errors.length} errores)`);
+}
+
+// Lanza la ingesta de una lista de tickers (no bloquea: responde y sigue en bg).
+app.post("/api/admin/ingest", requireAuth, requireAdmin, (req, res) => {
+  if (ingestState.running) return res.status(409).json({ error: "ya hay una ingesta en curso", state: ingestState });
+  const tickers = [...new Set((req.body?.tickers || []).map((s) => String(s).trim().toUpperCase()).filter(Boolean))];
+  if (!tickers.length) return res.status(400).json({ error: "lista de tickers vacía" });
+  const since = req.body?.since || "2024-12-01";
+  runIngest(tickers, since); // fire-and-forget
+  res.json({ started: tickers.length });
+});
+
+app.get("/api/admin/ingest/status", requireAuth, requireAdmin, (_req, res) => res.json(ingestState));
+
 /* ----------------- frontend compilado (SPA, mismo origen) --------------- */
 // Sirve los estáticos del build de Vite y hace fallback a index.html para las
 // rutas del cliente. Se monta DESPUÉS de las rutas /api.

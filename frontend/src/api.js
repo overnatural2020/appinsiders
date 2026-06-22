@@ -57,6 +57,10 @@ export const adminGetSchedule = () => req("/api/admin/schedule");
 export const adminSaveSchedule = (body) => req("/api/admin/schedule", { method: "PUT", body }).then((d) => d.schedule);
 export const adminRunInspection = (reingest = false) => req("/api/admin/schedule/run", { method: "POST", body: { reingest } }).then((d) => d.result);
 
+/* --------------------------- admin: ingesta ------------------------------ */
+export const adminIngest = (tickers, since) => req("/api/admin/ingest", { method: "POST", body: { tickers, since } });
+export const adminIngestStatus = () => req("/api/admin/ingest/status");
+
 export async function fetchTickers(token) {
   return (await getJSON(`/api/insiders`, token)).tickers;
 }

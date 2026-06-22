@@ -37,7 +37,7 @@ const SECTORS = ["Tecnología", "Salud", "Industriales", "Utilities", "Financier
   "Consumo discr.", "Comunicaciones", "Consumo básico", "Energía", "Inmobiliario", "Materiales"];
 
 // [sym, nombre, sector, mcap($B), liquidez($M/día), precio($), ingresos?]
-const CATALOG = [
+export const CATALOG = [
   // Tecnología
   ["NVDA", "NVIDIA", "Tecnología", 2900, 9000, 178, true], ["AVGO", "Broadcom", "Tecnología", 800, 3000, 210, true],
   ["AMD", "AMD", "Tecnología", 250, 2500, 150, true], ["MU", "Micron", "Tecnología", 130, 1800, 120, true],
@@ -407,7 +407,7 @@ export default function App() {
 
   if (checking) return <div style={{ fontFamily: SANS, background: C.bg, color: C.mut, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>Cargando…</div>;
   if (!me) return <Login onLogin={setMe} />;
-  if (view === "admin" && me.role === "admin") return <Admin me={me} onClose={() => setView("tool")} />;
+  if (view === "admin" && me.role === "admin") return <Admin me={me} onClose={() => setView("tool")} catalogSyms={CATALOG.map((t) => t.sym)} />;
   return <Scanner me={me} onLogout={onLogout} onAdmin={() => setView("admin")} />;
 }
 
