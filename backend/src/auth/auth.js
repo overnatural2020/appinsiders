@@ -3,7 +3,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { config } from "../config.js";
-import { listUsers, createUser, findUserById } from "../store/usersStore.js";
+import { listUsers, createUser, updateUser, findUserById, findUserByEmail } from "../store/usersStore.js";
 
 export async function hashPassword(plain) {
   return bcrypt.hash(plain, 10);
@@ -52,4 +52,22 @@ export async function seedAdminIfEmpty() {
   const { email, password } = config.seedAdmin;
   await createUser({ email, passwordHash: await hashPassword(password), role: "admin", alerts: true });
   console.log(`[auth] Admin inicial creado: ${email} (cámbialo cuanto antes)`);
+}
+
+// Arranque: siembra el admin si no hay nadie y, si ADMIN_RESET=true, FUERZA el
+// admin a las credenciales de entorno (recuperación de acceso). Quita la variable
+// después de usarla.
+export async function ensureAdmin() {
+  await seedAdminIfEmpty();
+  if (process.env.ADMIN_RESET !== "true") return;
+  const { email, password } = config.seedAdmin;
+  const passwordHash = await hashPassword(password);
+  const existing = await findUserByEmail(email);
+  if (existing) {
+    await updateUser(existing.id, { passwordHash, role: "admin" });
+    console.log(`[auth] ADMIN_RESET: contraseña/rol de ${email} restablecidos`);
+  } else {
+    await createUser({ email, passwordHash, role: "admin", alerts: true });
+    console.log(`[auth] ADMIN_RESET: admin ${email} creado`);
+  }
 }

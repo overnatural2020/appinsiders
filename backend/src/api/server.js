@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 import { getWeekly, getPrices, listTickers } from "../store/jsonStore.js";
 import {
-  requireAuth, requireAdmin, seedAdminIfEmpty, issueToken,
+  requireAuth, requireAdmin, ensureAdmin, issueToken,
   hashPassword, verifyPassword,
 } from "../auth/auth.js";
 import {
@@ -166,7 +166,7 @@ async function bootstrapIngest() {
   console.log("[bootstrap] ingesta inicial completa");
 }
 
-await seedAdminIfEmpty();
+await ensureAdmin();
 app.listen(config.port, () => {
   console.log(`API en http://localhost:${config.port}`);
   // Scheduler de alertas embebido (un solo servicio). Desactiva con RUN_SCHEDULER=false.
