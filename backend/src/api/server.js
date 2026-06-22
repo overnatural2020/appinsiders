@@ -167,6 +167,14 @@ app.post("/api/admin/ingest", requireAuth, requireAdmin, (req, res) => {
 
 app.get("/api/admin/ingest/status", requireAuth, requireAdmin, (_req, res) => res.json(ingestState));
 
+// Diagnóstico (sin secretos): qué proveedor de precios está activo.
+app.get("/api/admin/diag", requireAuth, requireAdmin, (_req, res) => res.json({
+  priceProvider: config.market.provider,
+  tiingoKeyPresent: !!config.market.tiingoKey,
+  benchmark: config.market.benchmark,
+  dataDir: config.dataDir,
+}));
+
 /* ----------------- frontend compilado (SPA, mismo origen) --------------- */
 // Sirve los estáticos del build de Vite y hace fallback a index.html para las
 // rutas del cliente. Se monta DESPUÉS de las rutas /api.
