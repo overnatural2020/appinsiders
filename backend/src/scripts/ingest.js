@@ -7,7 +7,7 @@ import { cikForTicker, listForm4Filings, fetchForm4Xml } from "../edgar/client.j
 import { parseForm4 } from "../pipeline/form4Parser.js";
 import { aggregateWeekly, enrichOpportunistic } from "../pipeline/aggregate.js";
 import { fetchDailyPrices } from "../market/client.js";
-import { saveTransactions, saveWeekly, savePrices, getWeekly } from "../store/jsonStore.js";
+import { saveTransactions, saveWeekly, savePrices, getWeekly, getPrices } from "../store/jsonStore.js";
 import { config } from "../config.js";
 import { pathToFileURL } from "node:url";
 
