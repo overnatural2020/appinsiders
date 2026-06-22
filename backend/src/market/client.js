@@ -51,7 +51,33 @@ async function fetchYahoo(ticker, rangeYears = 3, retries = 4) {
   return out;
 }
 
+// ---- Tiingo (API con key, fiable desde datacenter) ----
+async function fetchTiingo(ticker, retries = 4) {
+  const key = config.market.tiingoKey;
+  if (!key) throw new Error("TIINGO_API_KEY no configurada");
+  const start = "2023-01-01";
+  // Tiingo no entiende sufijos tipo BRK.B → BRK-B
+  const sym = ticker.toUpperCase().replace(".", "-");
+  const url = `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(sym)}/prices?startDate=${start}&token=${key}`;
+  let data;
+  for (let attempt = 0; ; attempt++) {
+    await throttle(900); // Tiingo free: 50 req/h — vamos holgados
+    let res;
+    try { res = await fetch(url, { headers: { Accept: "application/json" } }); }
+    catch (e) { if (attempt >= retries) throw e; await sleep(1000 * 2 ** attempt); continue; }
+    if ((res.status === 429 || res.status >= 500) && attempt < retries) { await sleep(2000 * 2 ** attempt); continue; }
+    if (!res.ok) throw new Error(`Tiingo ${res.status} :: ${ticker}`);
+    data = await res.json();
+    break;
+  }
+  if (!Array.isArray(data) || !data.length) throw new Error(`Tiingo sin datos para ${ticker}`);
+  return data
+    .map((d) => ({ date: String(d.date).slice(0, 10), close: d.adjClose ?? d.close, volume: d.adjVolume ?? d.volume ?? null }))
+    .filter((d) => Number.isFinite(d.close))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
 export async function fetchDailyPrices(ticker) {
-  // (yahoo por ahora; stooq/alphavantage quedan como extensión futura)
+  if (config.market.provider === "tiingo") return fetchTiingo(ticker);
   return fetchYahoo(ticker);
 }

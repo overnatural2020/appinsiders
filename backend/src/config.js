@@ -30,8 +30,9 @@ export const config = {
 
   // Datos de mercado (precios para los retornos forward y el régimen).
   market: {
-    provider: process.env.MARKET_PROVIDER || "yahoo", // yahoo | stooq | alphavantage
-    alphaVantageKey: process.env.ALPHAVANTAGE_KEY || "",
+    // Con TIINGO_API_KEY usa Tiingo (fiable desde datacenter); si no, Yahoo.
+    provider: process.env.MARKET_PROVIDER || (process.env.TIINGO_API_KEY ? "tiingo" : "yahoo"),
+    tiingoKey: process.env.TIINGO_API_KEY || "",
     benchmark: process.env.MARKET_BENCHMARK || "SPY",
   },
 
