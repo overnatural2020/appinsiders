@@ -205,18 +205,23 @@ const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
 const std = (a, m) => (a.length < 2 ? 0 : Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1)));
 const clamp = (x) => Math.max(0, Math.min(1, x));
 
-function conviction(z, contribs, type) {
-  const n = contribs.length;
+function conviction(z, contribs, type, dollar) {
+  // Amplitud = insiders ÚNICOS (no líneas de transacción). Un directivo que parte
+  // su compra en varios lotes cuenta como 1, no como N.
+  const n = new Set(contribs.map((c) => c.ownerCik || c)).size;
   const role = contribs.reduce((m, c) => Math.max(m, ROLE_W[c.role] || 0), 0);
-  const hold = contribs.reduce((m, c) => Math.max(m, c.holdPct), 0);
+  const hold = contribs.reduce((m, c) => Math.max(m, c.holdPct || 0), 0);
   const opp = contribs.some((c) => c.opp) ? 1 : 0.3;
-  const parts = { mag: clamp(z / 6), breadth: clamp(n / 5), role, hold: clamp(hold / 0.5), opp };
-  let s = 25 * parts.mag + 25 * parts.breadth + 20 * parts.role + 15 * parts.hold + 15 * parts.opp;
+  // Tamaño económico de la operación (escala log: ~$100k ≈ 0, ~$100M ≈ 1).
+  const size = dollar ? clamp((Math.log10(dollar) - 5) / 3) : 0;
+  const parts = { mag: clamp(z / 6), breadth: clamp(n / 5), role, hold: clamp(hold / 0.5), opp, size };
+  // Pesos: el TAMAÑO domina; se baja el peso del z (propenso a artefactos sin baseline).
+  let s = 15 * parts.mag + 20 * parts.breadth + 15 * parts.role + 10 * parts.hold + 10 * parts.opp + 30 * parts.size;
   if (type === "sell") s *= 0.4;
-  return { score: Math.round(s), parts, role, n, hold, opp: opp === 1 };
+  return { score: Math.round(s), parts, role, n, hold, dollar, opp: opp === 1 };
 }
 
-function detectWeek(week, base, threshold, side) {
+function detectWeek(week, base, threshold, side, px) {
   const out = [];
   const t = (key, ck, type) => {
     const v = week[key]; if (v <= 0) return;
@@ -224,7 +229,8 @@ function detectWeek(week, base, threshold, side) {
     const m = mean(arr), s = std(arr, m);
     const z = s > 0 ? (v - m) / s : v > 0 ? 99 : 0;
     if (z < threshold) return;
-    out.push({ type, z, mult: m > 0 ? v / m : 99, shares: v, week: week.ws, wi: week.i, conv: conviction(z, week[ck], type) });
+    const dollar = px ? v * px : null; // v = acciones de la semana (P/S limpias) × precio
+    out.push({ type, z, mult: m > 0 ? v / m : 99, shares: v, week: week.ws, wi: week.i, conv: conviction(z, week[ck], type, dollar) });
   };
   if (side !== "sell") t("buyQ", "buyers", "buy");
   if (side !== "buy") t("sellQ", "sellers", "sell");
@@ -264,7 +270,7 @@ function scanWeek(ds, universe, wi, threshold, side) {
     const base = T.weeks.slice(Math.max(0, wi - 52), wi);
     if (base.length < 14) continue;
     let best = null;
-    for (const d of detectWeek(w, base, threshold, side))
+    for (const d of detectWeek(w, base, threshold, side, T.price?.[wi]))
       if (!best || d.conv.score > best.conv.score) best = d;
     if (best) { best.provisional = !isClosed(w.ws); res.push({ ...t, ...best }); }
   }
@@ -286,7 +292,7 @@ function backtest(ds, universe, threshold) {
     for (let i = 52; i < T.weeks.length; i++) {
       if (!isClosed(T.weeks[i].ws)) continue;
       const base = T.weeks.slice(i - 52, i);
-      for (const d of detectWeek(T.weeks[i], base, threshold, "both")) {
+      for (const d of detectWeek(T.weeks[i], base, threshold, "both", T.price?.[i])) {
         const exc = fwd(T, ds.bench, i, H.m3); if (exc == null) continue;
         (d.type === "buy" ? buys : sells).push({ conv: d.conv.score, exc });
       }
@@ -363,9 +369,9 @@ function buildVerdict(active, bt, recent, regime) {
   };
 
   if (active.type === "sell") {
-    R.push({ t: "red", x: `Insiders están VENDIENDO ${active.sym}: no es una tesis de compra.` });
-    R.push({ t: "yellow", x: "Y las ventas son señal de baja fiabilidad, tampoco es un corto claro." });
-    return { level: "red", headline: "Abstenerse de comprar", buyCase: 0, dimension: null, reasons: R };
+    R.push({ t: "red", x: `Insiders VENDIERON ${active.sym}: no es una señal de compra.` });
+    R.push({ t: "yellow", x: "Las ventas son señal de baja fiabilidad (suelen ser por liquidez/impuestos)." });
+    return { level: "red", headline: "Señal de venta de insiders", buyCase: 0, dimension: null, reasons: R };
   }
 
   const conv = active.conv.score;
@@ -388,9 +394,9 @@ function buildVerdict(active, bt, recent, regime) {
   if (bt.buy.n < 25) R.push({ t: "yellow", x: `Muestra pequeña (n=${bt.buy.n}): veredicto tentativo.` });
   if (recent) R.push({ t: "yellow", x: "Señal reciente: sin retorno realizado aún; se apoya en histórico." });
   ctx();
-  let level = "red", headline = "Abstenerse de comprar";
-  if (buyCase >= 68) { level = "green"; headline = "Análisis favorable para compra"; }
-  else if (buyCase >= 42) { level = "yellow"; headline = "Neutro — sin convicción o validación suficiente"; }
+  let level = "red", headline = "Señal débil";
+  if (buyCase >= 68) { level = "green"; headline = "Señal de insiders fuerte"; }
+  else if (buyCase >= 42) { level = "yellow"; headline = "Señal moderada"; }
   let dimension = "Moderada";
   if (level === "red") dimension = null;
   else if (regime && regime.score < 35) dimension = "Alta";
@@ -598,7 +604,7 @@ function Scanner({ me, onLogout, onAdmin }) {
                       {r.conv.opp && <Tag col={C.ice}>OPORTUNISTA</Tag>}
                       {r.provisional && <Tag col={C.amber}>EN CURSO</Tag>}
                     </div>
-                    <div style={{ color: C.mut, fontSize: 12, marginTop: 3 }}>{r.name} · {r.sector} · {r.conv.n} insider{r.conv.n > 1 ? "s" : ""} · z {r.z.toFixed(1)}</div>
+                    <div style={{ color: C.mut, fontSize: 12, marginTop: 3 }}>{r.name} · {r.sector} · {r.conv.n} insider{r.conv.n > 1 ? "s" : ""} · z {r.z >= 20 ? "20+" : r.z.toFixed(1)}</div>
                   </div>
                   <div style={{ textAlign: "right", fontFamily: MONO }}>
                     <div style={{ color: col, fontSize: 20, fontWeight: 700 }}>{r.conv.score}</div>
@@ -664,10 +670,11 @@ function Scanner({ me, onLogout, onAdmin }) {
             <div style={{ borderTop: `1px solid ${C.line}`, padding: "13px 16px" }}>
               <div style={{ fontSize: 11, color: C.mut, letterSpacing: "0.04em", marginBottom: 9 }}>DESGLOSE DE CONVICCIÓN</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <Meter l="Magnitud (z)" v={active.conv.parts.mag} c={C.buy} />
-                <Meter l="Amplitud (nº insiders)" v={active.conv.parts.breadth} c={C.buy} />
+                <Meter l="Tamaño ($)" v={active.conv.parts.size} c={C.buy} />
+                <Meter l="Amplitud (insiders únicos)" v={active.conv.parts.breadth} c={C.buy} />
                 <Meter l="Peso del rol" v={active.conv.parts.role} c={C.amber} />
                 <Meter l="% de su posición" v={active.conv.parts.hold} c={C.amber} />
+                <Meter l="Magnitud (z)" v={active.conv.parts.mag} c={C.ice} />
                 <Meter l="Oportunista" v={active.conv.parts.opp} c={C.ice} />
               </div>
             </div>
@@ -826,7 +833,7 @@ function StatCard({ title, s, dir }) {
 }
 const Kv = ({ k, v, c }) => <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: C.mut }}>{k}</span><span style={{ color: c || C.text, fontWeight: 600 }}>{v}</span></div>;
 function VerdictCard({ v, sym }) {
-  const map = { green: { c: C.buy, label: "FAVORABLE" }, yellow: { c: C.amber, label: "NEUTRO" }, red: { c: C.sell, label: "ABSTENERSE" } };
+  const map = { green: { c: C.buy, label: "FUERTE" }, yellow: { c: C.amber, label: "MODERADA" }, red: { c: C.sell, label: "DÉBIL" } };
   const m = map[v.level];
   const dot = { green: C.buy, yellow: C.amber, red: C.sell };
   return (
@@ -835,7 +842,7 @@ function VerdictCard({ v, sym }) {
         <span style={{ width: 14, height: 14, borderRadius: 14, background: m.c, boxShadow: `0 0 10px ${m.c}`, flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 15, fontWeight: 650, color: m.c }}>{v.headline}</div>
-          <div style={{ fontSize: 11.5, color: C.mut, marginTop: 1 }}>{sym} · semáforo de compra{v.dimension ? ` · dimensión ${v.dimension.toLowerCase()}` : ""}</div>
+          <div style={{ fontSize: 11.5, color: C.mut, marginTop: 1 }}>{sym} · fuerza de la señal{v.dimension ? ` · dimensión ${v.dimension.toLowerCase()}` : ""}</div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color: m.c }}>{v.buyCase}</div>

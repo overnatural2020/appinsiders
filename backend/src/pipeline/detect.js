@@ -3,7 +3,7 @@
 // z-score de la compra/venta de la semana objetivo contra su base de 52 semanas y
 // puntúa la convicción. Mismos pesos/umbrales que el motor del frontend.
 import { mondayOf } from "./week.js";
-import { getWeekly } from "../store/jsonStore.js";
+import { getWeekly, getPrices } from "../store/jsonStore.js";
 
 const WK = 7 * 864e5;
 const LAG_MS = 4 * 864e5; // rezago de presentación del Form 4
@@ -13,18 +13,19 @@ const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
 const std = (a, m) => (a.length < 2 ? 0 : Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1)));
 const clamp = (x) => Math.max(0, Math.min(1, x));
 
-function conviction(z, contribs, type) {
-  const n = contribs.length;
+function conviction(z, contribs, type, dollar) {
+  const n = new Set(contribs.map((c) => c.ownerCik || c)).size; // insiders ÚNICOS
   const role = contribs.reduce((m, c) => Math.max(m, ROLE_W[c.role] || 0), 0);
   const hold = contribs.reduce((m, c) => Math.max(m, c.holdPct || 0), 0);
   const opp = contribs.some((c) => c.opp) ? 1 : 0.3;
-  const parts = { mag: clamp(z / 6), breadth: clamp(n / 5), role, hold: clamp(hold / 0.5), opp };
-  let s = 25 * parts.mag + 25 * parts.breadth + 20 * parts.role + 15 * parts.hold + 15 * parts.opp;
+  const size = dollar ? clamp((Math.log10(dollar) - 5) / 3) : 0; // tamaño económico
+  const parts = { mag: clamp(z / 6), breadth: clamp(n / 5), role, hold: clamp(hold / 0.5), opp, size };
+  let s = 15 * parts.mag + 20 * parts.breadth + 15 * parts.role + 10 * parts.hold + 10 * parts.opp + 30 * parts.size;
   if (type === "sell") s *= 0.4;
   return { score: Math.round(s), n, role, opp: opp === 1 };
 }
 
-function detectWeek(week, base, threshold, side) {
+function detectWeek(week, base, threshold, side, px) {
   const out = [];
   const test = (key, ck, type) => {
     const v = week[key];
@@ -33,11 +34,19 @@ function detectWeek(week, base, threshold, side) {
     const m = mean(arr), s = std(arr, m);
     const z = s > 0 ? (v - m) / s : v > 0 ? 99 : 0;
     if (z < threshold) return;
-    out.push({ type, z, mult: m > 0 ? v / m : 99, shares: v, conv: conviction(z, week[ck], type) });
+    const dollar = px ? v * px : null;
+    out.push({ type, z, mult: m > 0 ? v / m : 99, shares: v, conv: conviction(z, week[ck], type, dollar) });
   };
   if (side !== "sell") test("buyQ", "buyers", "buy");
   if (side !== "buy") test("sellQ", "sellers", "sell");
   return out;
+}
+
+// Cierre en o después de `iso` (serie ascendente).
+function closeOnOrAfter(prices, iso) {
+  if (!prices?.length) return null;
+  for (const p of prices) if (p.date >= iso) return p.close;
+  return prices[prices.length - 1].close;
 }
 
 const isoOf = (t) => new Date(t).toISOString().slice(0, 10);
@@ -83,8 +92,10 @@ export async function inspectLatestWeek(tickers, { threshold = 2.5, side = "buy"
     week = grid[wi].ws;
     const base = grid.slice(Math.max(0, wi - 52), wi);
     if (base.length < 14) continue;
+    const pricesData = await getPrices(ticker);
+    const px = closeOnOrAfter(pricesData?.prices, grid[wi].ws); // precio para el tamaño $
     let best = null;
-    for (const d of detectWeek(grid[wi], base, threshold, side)) {
+    for (const d of detectWeek(grid[wi], base, threshold, side, px)) {
       if (!best || d.conv.score > best.conv.score) best = d;
     }
     if (best) {
