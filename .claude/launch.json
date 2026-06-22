@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "/Users/charli2401/Downloads/appInsiders/frontend",
+      "port": 5173
+    },
+    {
+      "name": "api-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/api/server.js"],
+      "cwd": "/Users/charli2401/Downloads/appInsiders/backend",
+      "port": 8080
+    }
+  ]
+}

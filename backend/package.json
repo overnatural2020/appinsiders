@@ -1,0 +1,21 @@
+{
+  "name": "insider-anomaly-backend",
+  "version": "0.1.0",
+  "description": "Ingesta y agregación de operaciones de insiders (SEC EDGAR Form 4) para el scanner de anomalías.",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node src/api/server.js",
+    "ingest": "node src/scripts/ingest.js",
+    "scheduler": "node src/scripts/scheduler.js",
+    "inspect": "node src/jobs/weeklyInspection.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "fast-xml-parser": "^4.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "node-cron": "^3.0.3"
+  }
+}
