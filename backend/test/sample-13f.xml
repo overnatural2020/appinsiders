@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Muestra de la "information table" de un 13F-HR (la presenta UN gestor y lista
+  TODAS sus posiciones). Para calcular "nº de fondos en INTC" y el cambio neto
+  trimestral hay que AGREGAR muchas de estas (una por gestor) y comparar trimestres.
+  Notas:
+   - El 13F identifica por CUSIP, no por ticker -> hace falta un mapa CUSIP->ticker.
+   - <value> históricamente venía en MILES de USD; desde 2023 en dólares enteros.
+   - El XML suele declarar un namespace por defecto; parsea con removeNSPrefix.
+-->
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+  <infoTable>
+    <nameOfIssuer>INTEL CORP</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>458140100</cusip>
+    <value>67080000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>500000</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>500000</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>NVIDIA CORP</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>67066G104</cusip>
+    <value>178000000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>1000000</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>1000000</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>APPLE INC</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>037833100</cusip>
+    <value>45000000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>200000</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SHARED-DEFINED</investmentDiscretion>
+    <votingAuthority>
+      <Sole>0</Sole>
+      <Shared>200000</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+</informationTable>
