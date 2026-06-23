@@ -17,6 +17,7 @@ import {
 import { runWeeklyInspection } from "../jobs/weeklyInspection.js";
 import { startScheduler } from "../scripts/scheduler.js";
 import { ingestTicker, cachePrices } from "../scripts/ingest.js";
+import { getWeeklyPrices, createAlphaVantageFetcher } from "../market/prices.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Carpeta del frontend compilado (build de Vite). En el contenedor se fija con
@@ -58,6 +59,18 @@ app.get("/api/market/:ticker", requireAuth, async (req, res) => {
   const data = await getPrices(ticker);
   if (!data) return res.status(404).json({ error: "sin precios para", ticker });
   res.json({ ticker, updatedAt: data.updatedAt, prices: data.prices });
+});
+
+// Momentum semanal (MA50/MA200 en semanas, posición y cruce de tendencia).
+// La API key de Alpha Vantage se lee del entorno (nunca literal).
+const weeklyPriceFetcher = createAlphaVantageFetcher({ apiKey: process.env.ALPHAVANTAGE_API_KEY });
+app.get("/api/prices/:ticker/weekly", requireAuth, async (req, res) => {
+  try {
+    const data = await getWeeklyPrices(req.params.ticker.toUpperCase(), { fetcher: weeklyPriceFetcher });
+    res.json({ ticker: req.params.ticker.toUpperCase(), weeks: data });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
 });
 
 app.get("/api/insiders/:ticker/weekly", requireAuth, async (req, res) => {
