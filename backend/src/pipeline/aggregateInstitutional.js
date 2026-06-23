@@ -47,22 +47,31 @@ function latestPerManager(filings, period, asOf) {
 }
 
 // Posiciones por ticker en UN período. Cada gestor (CIK) cuenta UNA sola vez.
+// Separa el conteo por TIPO de gestor (activo vs institucional) para que la señal
+// de un hedge fund de alta convicción pese distinto a la de un indexado. El tipo
+// viaja en cada filing como `managerType`.
 export function aggregateQuarter(filings, period, cusipToTicker, { asOf } = {}) {
-  const byTicker = new Map(); // ticker -> { managers:Set, shares, value }
+  const byTicker = new Map(); // ticker -> { managers:Set, byType:Map, shares, value }
   for (const f of latestPerManager(filings, period, asOf)) {
     for (const h of f.holdings || []) {
       const ticker = tickerFor(h.cusip, cusipToTicker);
       if (!ticker) continue;
-      if (!byTicker.has(ticker)) byTicker.set(ticker, { ticker, managers: new Set(), shares: 0, value: 0 });
+      if (!byTicker.has(ticker)) byTicker.set(ticker, { ticker, managers: new Set(), byType: new Map(), shares: 0, value: 0 });
       const t = byTicker.get(ticker);
       t.managers.add(f.managerCik);
+      if (f.managerType) {
+        if (!t.byType.has(f.managerType)) t.byType.set(f.managerType, new Set());
+        t.byType.get(f.managerType).add(f.managerCik);
+      }
       t.shares += h.shares || 0;
       t.value += h.value || 0;
     }
   }
   return [...byTicker.values()].map((t) => ({
     ticker: t.ticker,
-    funds: t.managers.size, // nº de gestores únicos en el ticker
+    funds: t.managers.size,                              // gestores únicos totales
+    fundsActivo: t.byType.get("activo")?.size || 0,      // de tipo activo
+    fundsInstitucional: t.byType.get("institucional")?.size || 0, // de tipo institucional
     shares: t.shares,
     value: t.value,
   }));
@@ -78,12 +87,23 @@ export function netInstitutionalChange(filings, period, prevPeriod, cusipToTicke
   const seen = new Set();
   for (const c of curr) {
     seen.add(c.ticker);
-    const p = prevMap.get(c.ticker) || { funds: 0, shares: 0 };
-    out.push({ ticker: c.ticker, funds: c.funds, netShares: c.shares - p.shares, netFunds: c.funds - p.funds, shares: c.shares });
+    const p = prevMap.get(c.ticker) || { funds: 0, shares: 0, fundsActivo: 0, fundsInstitucional: 0 };
+    out.push({
+      ticker: c.ticker, funds: c.funds, shares: c.shares,
+      fundsActivo: c.fundsActivo, fundsInstitucional: c.fundsInstitucional,
+      netShares: c.shares - p.shares,
+      netFunds: c.funds - p.funds,
+      netFundsActivo: c.fundsActivo - (p.fundsActivo || 0),          // cambio en hedge funds activos
+      netFundsInstitucional: c.fundsInstitucional - (p.fundsInstitucional || 0),
+    });
   }
   for (const p of prev) {
     if (seen.has(p.ticker)) continue;
-    out.push({ ticker: p.ticker, funds: 0, netShares: -p.shares, netFunds: -p.funds, shares: 0 });
+    out.push({
+      ticker: p.ticker, funds: 0, shares: 0, fundsActivo: 0, fundsInstitucional: 0,
+      netShares: -p.shares, netFunds: -p.funds,
+      netFundsActivo: -(p.fundsActivo || 0), netFundsInstitucional: -(p.fundsInstitucional || 0),
+    });
   }
   return out.sort((a, b) => b.netShares - a.netShares);
 }
