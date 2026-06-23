@@ -8,8 +8,35 @@ import { parseForm4 } from "../pipeline/form4Parser.js";
 import { aggregateWeekly, enrichOpportunistic } from "../pipeline/aggregate.js";
 import { fetchDailyPrices } from "../market/client.js";
 import { saveTransactions, saveWeekly, savePrices, getWeekly, getPrices } from "../store/jsonStore.js";
+import { createDiskCache } from "../store/diskCache.js";
 import { config } from "../config.js";
 import { pathToFileURL } from "node:url";
+import { join } from "node:path";
+
+const DAY = 864e5;
+
+// Cachés en disco (perezosas) para no re-pegarle a EDGAR/precios en cada corrida.
+// Precios: TTL largo (los cierres semanales históricos no cambian).
+// Form 4 por ticker: TTL de 1 día (pueden llegar filings nuevos a diario).
+let _priceCache, _form4Cache;
+const priceCache = () => (_priceCache ??= createDiskCache({
+  dir: join(config.dataDir, "cache", "prices"),
+  fetcher: (ticker) => fetchDailyPrices(ticker),
+}));
+const form4Cache = () => (_form4Cache ??= createDiskCache({
+  dir: join(config.dataDir, "cache", "form4"),
+  fetcher: async (key) => {
+    const [ticker, sinceISO] = key.split("|");
+    const cik = await cikForTicker(ticker);
+    const filings = await listForm4Filings(cik, sinceISO);
+    const txns = [];
+    for (const f of filings) {
+      try { parseForm4(await fetchForm4Xml(f)).forEach((t) => txns.push({ ...t, filingDate: f.filingDate })); }
+      catch (e) { console.warn(`  ! ${f.accession}: ${e.message}`); }
+    }
+    return { cik, nFilings: filings.length, txns };
+  },
+}));
 
 function parseArgs(argv) {
   const a = {};
@@ -31,10 +58,12 @@ async function cachePrices(ticker, { force = false, maxAgeHours = 20 } = {}) {
         if (ageH < maxAgeHours) { console.log(`  · precios ${ticker}: frescos (${ageH.toFixed(0)}h), se omite`); return; }
       }
     }
-    const prices = await fetchDailyPrices(ticker);
+    // diskCache con TTL largo (6 días): los cierres semanales históricos no
+    // cambian, así no re-bajamos toda la serie en cada corrida.
+    const { value: prices, fromCache } = await priceCache().getOrFetch(T, { maxAgeMs: 6 * DAY });
     if (prices?.length) {
       await savePrices(T, prices);
-      console.log(`  · precios ${ticker}: ${prices.length} días`);
+      console.log(`  · precios ${ticker}: ${prices.length} días${fromCache ? " (caché)" : ""}`);
     }
   } catch (e) {
     console.warn(`  ! precios ${ticker}: ${e.message}`);
@@ -44,20 +73,11 @@ async function cachePrices(ticker, { force = false, maxAgeHours = 20 } = {}) {
 
 export { cachePrices };
 export async function ingestTicker(ticker, sinceISO) {
-  const cik = await cikForTicker(ticker);
-  const filings = await listForm4Filings(cik, sinceISO);
-  console.log(`[${ticker}] CIK ${cik} · ${filings.length} Form 4 desde ${sinceISO}`);
-
-  const txns = [];
-  for (const f of filings) {
-    try {
-      const xml = await fetchForm4Xml(f);
-      const parsed = parseForm4(xml).map((t) => ({ ...t, filingDate: f.filingDate }));
-      txns.push(...parsed);
-    } catch (e) {
-      console.warn(`  ! ${f.accession}: ${e.message}`);
-    }
-  }
+  // Form 4 por ticker vía diskCache (TTL 1 día): evita re-descargar y re-parsear
+  // todos los XML en corridas repetidas el mismo día.
+  const { value: f4, fromCache } = await form4Cache().getOrFetch(`${ticker}|${sinceISO}`, { maxAgeMs: DAY });
+  const txns = f4.txns;
+  console.log(`[${ticker}] CIK ${f4.cik} · ${f4.nFilings} Form 4 desde ${sinceISO}${fromCache ? " (caché)" : ""} · ${txns.length} operaciones`);
 
   let weeks = aggregateWeekly(txns);
   weeks = enrichOpportunistic(txns, weeks);
